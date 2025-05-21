@@ -2,10 +2,16 @@ package main
 
 import (
 	"context"
+	"math/rand"
+	"fmt"
 	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+
+	"github.com/eclipse/paho.golang/autopaho"
+	"github.com/eclipse/paho.golang/paho"
 )
 
 func main() {
@@ -19,6 +25,7 @@ func main() {
 		panic(err)
 	}
 
+	topic := "device/iot1/command"
 	cliCfg := autopaho.ClientConfig{
 		ServerUrls: []*url.URL{u},
 		KeepAlive:  20, // Keepalive message should be sent every 20 seconds
@@ -42,11 +49,13 @@ func main() {
 			}
 			fmt.Println("mqtt subscription made")
 		},
-		OnConnectError: func(err error) { fmt.Printf("error whilst attempting connection: %s\n", err) },
+		OnConnectError: func(err error) {
+			 fmt.Printf("error whilst attempting connection: %s\n", err)
+		},
 		// eclipse/paho.golang/paho provides base mqtt functionality, the below config will be passed in for each connection
 		ClientConfig: paho.ClientConfig{
 			// If you are using QOS 1/2, then it's important to specify a client id (which must be unique)
-			ClientID: clientID,
+			ClientID: "iot1",
 			// OnPublishReceived is a slice of functions that will be called when a message is received.
 			// You can write the function(s) yourself or use the supplied Router
 			OnPublishReceived: []func(paho.PublishReceived) (bool, error){
@@ -82,15 +91,18 @@ func main() {
 		case <-ticker.C:
 			msgCount++
 			// Publish a test message (use PublishViaQueue if you don't want to wait for a response)
-			if _, err = c.Publish(ctx, &paho.Publish{
+			_, err = c.Publish(ctx, &paho.Publish{
 				QoS:     1,
-				Topic:   topic,
-				Payload: []byte("TestMessage: " + strconv.Itoa(msgCount)),
-			}); err != nil {
+				Topic:   "device/iot1/state",
+				Payload: []byte{byte(rand.Int() + 50), byte(rand.Int() % 5) + 1},
+			});
+
+			if err != nil {
 				if ctx.Err() == nil {
 					panic(err) // Publish will exit when context cancelled or if something went wrong
 				}
 			}
+			
 			continue
 		case <-ctx.Done():
 		}
