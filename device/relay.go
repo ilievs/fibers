@@ -75,6 +75,10 @@ func (d *RelayDevice) fanoutState(cl *mochi.Client, sub packets.Subscription, pk
 	d.callbackMutex.RUnlock()
 }
 
+func Id() string {
+	
+}
+
 func (d *RelayDevice) ListCommands() ([]Command, error) {
 	return d.availableCommands, nil
 }

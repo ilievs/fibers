@@ -1,9 +1,7 @@
-package device
+package broker
 
 import (
-	"fmt"
 	"log"
-	"os"
 	"sync"
 	"sync/atomic"
 
@@ -11,6 +9,8 @@ import (
 	"github.com/mochi-mqtt/server/v2/hooks/auth"
 	"github.com/mochi-mqtt/server/v2/listeners"
 	"github.com/mochi-mqtt/server/v2/packets"
+
+	. "github.com/ilievs/fibers/device"
 )
 
 type Subscription struct {
@@ -30,40 +30,15 @@ func NewBroker() *MqttBrokerAndClient {
 	server := mochi.New(&mochi.Options{
 		InlineClient: true,
 	})
+	
+	devices := make(map[string]SimpleDevice)
 
 	return &MqttBrokerAndClient{
 		server: server,
 		subscriberIdCounter: 1,
 		subscriptionsById: make(map[int]*Subscription),
-		devices: make(map[string]SimpleDevice),
-		,
+		devices: devices,
 	}
-}
-
-func (m *MqttBrokerAndClient) AddDevice(d SimpleDevice) {
-
-}
-
-type AddNewDeviceHook struct {
-	mochi.HookBase
-	mqttClient *MqttBrokerAndClient
-}
-
-// OnSessionEstablished is called when a new client establishes a session (after OnConnect).
-func (h *AddNewDeviceHook) OnSessionEstablished(cl *mochi.Client, pk packets.Packet) {
-	dev, err := NewRelayDevice(h.mqttClient.server, cl.ID)
-	if err != nil {
-		log.Println("Failed to add new device with ID", cl.ID,
-			"- Error:", err, "- Closing connection!")
-		cl.Net.Conn.Close()
-	}
-	devices[cl.ID] = dev
-}
-
-// OnDisconnect is called when a client is disconnected for any reason.
-func (h *AddNewDeviceHook) OnDisconnect(cl *mochi.Client, err error, expire bool) {
-	// remove the device from the internal state of the server
-	delete(devices, cl.ID)
 }
 
 
