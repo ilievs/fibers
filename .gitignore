@@ -26,4 +26,4 @@ go.work.sum
 
 # exec files
 fibers
-mock/mock-mqtt-device
+mock/mock

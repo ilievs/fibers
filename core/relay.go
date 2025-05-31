@@ -1,7 +1,6 @@
-package device
+package core
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -16,34 +15,30 @@ type OnStateChangeCallback func(state State)
 type OnErrorCallback func(err error)
 
 type RelayDevice struct {
+	id string
 	mqttClient *mochi.Server
 	availableCommands []Command
 	stateTopic string
 	commandTopic string
 	state *State
 	subscriberIdCounter atomic.Uint32
-	callbackMutex sync.RWMutex
-	stateChannels []chan State
+	subscribersMutex sync.RWMutex
+	stateChannels []chan *State
 	errorChannels []chan error
 }
 
-func NewRelayDevice(mqttClient *mochi.Server, deviceName string) (*RelayDevice, error) {
+func NewRelayDevice(mqttClient *mochi.Server, deviceId string, deviceCommand []Command) (*RelayDevice, error) {
 	
-	stateTopic := fmt.Sprintf("device/%s/state", deviceName)
-	commandTopic := fmt.Sprintf("device/%s/command", deviceName)
+	stateTopic := fmt.Sprintf("devices/%s/state", deviceId)
+	commandTopic := fmt.Sprintf("devices/%s/command", deviceId)
 
 	dev := &RelayDevice{
-		mqttClient,
-		[]Command{
-			{"power", []string{"on", "off"}},
-		},
-		stateTopic,
-		commandTopic,
-		&State{},
-		atomic.Uint32{},
-		sync.RWMutex{},
-		[]chan State{},
-		[]chan error{},
+		id: deviceId,
+		mqttClient: mqttClient,
+		availableCommands: deviceCommand,
+		stateTopic: stateTopic,
+		commandTopic: commandTopic,
+		state: &State{},
 	}
 	
 	go func() {
@@ -55,35 +50,41 @@ func NewRelayDevice(mqttClient *mochi.Server, deviceName string) (*RelayDevice, 
 }
 
 func (d *RelayDevice) fanoutState(cl *mochi.Client, sub packets.Subscription, pk packets.Packet) {
+	voltage := strconv.Itoa(int(pk.Payload[0]))
+	current := strconv.Itoa(int(pk.Payload[1]))
+
 	log.Println("received message client", cl.ID,
 		"subscriptionId", sub.Identifier,
 		"topic", pk.TopicName,
-		"voltage", strconv.Itoa(int(pk.Payload[0])),
-		"current", strconv.Itoa(int(pk.Payload[1])))
+		"voltage", voltage,
+		"current", current)
 	
-	d.state = &State{map[string]string{
-		"voltage": strconv.Itoa(int(pk.Payload[0])),
-		"current": strconv.Itoa(int(pk.Payload[1])),
-	}}
+	d.state = &State{
+		map[string]string{
+				"voltage": voltage,
+				"current": current,
+			},
+		}
 
-	d.callbackMutex.RLock()
+	d.subscribersMutex.RLock()
 	for _, c := range d.stateChannels {
 		go func() {
-			c <- *d.state
+			c <- d.state
 		}()
 	}
-	d.callbackMutex.RUnlock()
+	d.subscribersMutex.RUnlock()
 }
 
-func Id() string {
-	
+func (d *RelayDevice) Id() string {
+	return d.id
 }
 
 func (d *RelayDevice) ListCommands() ([]Command, error) {
 	return d.availableCommands, nil
 }
 
-func (d *RelayDevice) SendCommand(command Command) error {
+func (d *RelayDevice) SendCommand(command *Command) error {
+	var payload []byte
 	switch command.Name {
 	case "power": {
 		numArgs := len(command.Arguments)
@@ -93,32 +94,37 @@ func (d *RelayDevice) SendCommand(command Command) error {
 		
 		switch command.Arguments[0] {
 		case "on":
-			d.mqttClient.Publish("iot1/power", []byte{1}, true, 0)
-			return nil
+			payload = []byte{1}
 		case "off":
-			d.mqttClient.Publish("iot1/power", []byte{0}, true, 0)
-			return nil
+			payload = []byte{0}
 		default:
-			return fmt.Errorf("unknown command %s", command.Arguments[0])	
+			return fmt.Errorf("unknown command argument %s", command.Arguments[0])	
 		}
 	}
 	default:
-		return errors.New("unknown command")
+		return fmt.Errorf("unknown command %s", command.Name)
 	}
+	
+	err := d.mqttClient.Publish(d.commandTopic, payload, true, 0)
+	return err
 }
 
-func (d *RelayDevice) SubcribeToStateChanges() (chan State, error) {
-	d.callbackMutex.Lock()
-	newStateChan := make(chan State)
+func (d *RelayDevice) GetState() *State {
+	return d.state
+}
+
+func (d *RelayDevice) SubcribeToStateChanges() (chan *State, error) {
+	d.subscribersMutex.Lock()
+	newStateChan := make(chan *State)
 	d.stateChannels = append(d.stateChannels, newStateChan)
-	d.callbackMutex.Unlock()
+	d.subscribersMutex.Unlock()
 	return newStateChan, nil
 }
 
 func (d *RelayDevice) SubcribeToErrorChanges() (chan error, error) {
-	d.callbackMutex.Lock()
+	d.subscribersMutex.Lock()
 	newErrorChan := make(chan error)
 	d.errorChannels = append(d.errorChannels, newErrorChan)
-	d.callbackMutex.Unlock()
+	d.subscribersMutex.Unlock()
 	return newErrorChan, nil
 }

@@ -1,8 +1,8 @@
-package device
+package core
 
 type Command struct {
-	Name      string
-	Arguments []string
+	Name      string	`json:"name"`
+	Arguments []string	`json:"args"`
 }
 
 type State struct {
@@ -12,8 +12,8 @@ type State struct {
 type SimpleDevice interface {
 	Id() string
 	ListCommands() ([]Command, error)
-	SendCommand(command Command) error
-	GetState() State
-	SubcribeToStateChanges() (chan State, error)
+	SendCommand(command *Command) error
+	GetState() *State
+	SubcribeToStateChanges() (chan *State, error)
 	SubcribeToErrorChanges() (chan error, error)
 }
