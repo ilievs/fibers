@@ -23,3 +23,7 @@ go.work.sum
 
 # env file
 .env
+
+# exec files
+fibers
+mock/mock
