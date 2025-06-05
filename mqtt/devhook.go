@@ -56,7 +56,6 @@ func (h *AddNewDeviceHook) Init(config any) error {
 
 // OnSessionEstablished is called when a new client establishes a session (after OnConnect).
 func (h *AddNewDeviceHook) OnSessionEstablished(cl *mochi.Client, pk packets.Packet) {
-	log.Println("New device added")
 	deviceCommands := []core.Command{
 		{Name: "power", Arguments: []string{"on", "off"}},
 	}
@@ -71,10 +70,12 @@ func (h *AddNewDeviceHook) OnSessionEstablished(cl *mochi.Client, pk packets.Pac
 	}
 	h.devMan.AddDevice(dev)
 
+	log.Println("New device added", cl.ID)
 }
 
 // OnDisconnect is called when a client is disconnected for any reason.
 func (h *AddNewDeviceHook) OnDisconnect(cl *mochi.Client, err error, expire bool) {
 	// remove the device from the internal state of the server
 	h.devMan.RemoveDevice(cl.ID)
+	log.Println("Device removed", cl.ID)
 }

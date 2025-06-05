@@ -1,9 +1,9 @@
 package core
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
-	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -14,7 +14,7 @@ import (
 type OnStateChangeCallback func(state State)
 type OnErrorCallback func(err error)
 
-type RelayDevice struct {
+type JsonCommDevice struct {
 	id string
 	mqttClient *mochi.Server
 	availableCommands []Command
@@ -27,12 +27,12 @@ type RelayDevice struct {
 	errorChannels []chan error
 }
 
-func NewRelayDevice(mqttClient *mochi.Server, deviceId string, deviceCommand []Command) (*RelayDevice, error) {
+func NewRelayDevice(mqttClient *mochi.Server, deviceId string, deviceCommand []Command) (*JsonCommDevice, error) {
 	
 	stateTopic := fmt.Sprintf("devices/%s/state", deviceId)
 	commandTopic := fmt.Sprintf("devices/%s/command", deviceId)
 
-	dev := &RelayDevice{
+	dev := &JsonCommDevice{
 		id: deviceId,
 		mqttClient: mqttClient,
 		availableCommands: deviceCommand,
@@ -49,24 +49,18 @@ func NewRelayDevice(mqttClient *mochi.Server, deviceId string, deviceCommand []C
 	return dev, nil
 }
 
-func (d *RelayDevice) fanoutState(cl *mochi.Client, sub packets.Subscription, pk packets.Packet) {
-	voltage := strconv.Itoa(int(pk.Payload[0]))
-	current := strconv.Itoa(int(pk.Payload[1]))
+func (d *JsonCommDevice) fanoutState(cl *mochi.Client, sub packets.Subscription, pk packets.Packet) {
+	
+	stateProperties := make(map[string]string)
+	json.Unmarshal(pk.Payload, &stateProperties)
 
-	log.Println("received message client", cl.ID,
+	log.Println("received message from client", cl.ID,
 		"subscriptionId", sub.Identifier,
 		"topic", pk.TopicName,
-		"voltage", voltage,
-		"current", current)
+		"state", stateProperties)
 	
-	d.state = &State{
-		map[string]string{
-				"voltage": voltage,
-				"current": current,
-			},
-		}
-
 	d.subscribersMutex.RLock()
+	d.state = &State{stateProperties}
 	for _, c := range d.stateChannels {
 		go func() {
 			c <- d.state
@@ -75,45 +69,29 @@ func (d *RelayDevice) fanoutState(cl *mochi.Client, sub packets.Subscription, pk
 	d.subscribersMutex.RUnlock()
 }
 
-func (d *RelayDevice) Id() string {
+func (d *JsonCommDevice) Id() string {
 	return d.id
 }
 
-func (d *RelayDevice) ListCommands() ([]Command, error) {
+func (d *JsonCommDevice) ListCommands() ([]Command, error) {
 	return d.availableCommands, nil
 }
 
-func (d *RelayDevice) SendCommand(command *Command) error {
-	var payload []byte
-	switch command.Name {
-	case "power": {
-		numArgs := len(command.Arguments)
-		if numArgs != 1 {
-			return fmt.Errorf("expected 1 argument. Instead got %d args", numArgs)
-		}
-		
-		switch command.Arguments[0] {
-		case "on":
-			payload = []byte{1}
-		case "off":
-			payload = []byte{0}
-		default:
-			return fmt.Errorf("unknown command argument %s", command.Arguments[0])	
-		}
+func (d *JsonCommDevice) SendCommand(command *Command) error {
+	payload, err := json.Marshal(command)
+	if err != nil {
+		return err
 	}
-	default:
-		return fmt.Errorf("unknown command %s", command.Name)
-	}
-	
-	err := d.mqttClient.Publish(d.commandTopic, payload, true, 0)
+
+	err = d.mqttClient.Publish(d.commandTopic, payload, true, 0)
 	return err
 }
 
-func (d *RelayDevice) GetState() *State {
+func (d *JsonCommDevice) GetState() *State {
 	return d.state
 }
 
-func (d *RelayDevice) SubcribeToStateChanges() (chan *State, error) {
+func (d *JsonCommDevice) SubcribeToStateChanges() (chan *State, error) {
 	d.subscribersMutex.Lock()
 	newStateChan := make(chan *State)
 	d.stateChannels = append(d.stateChannels, newStateChan)
@@ -121,7 +99,7 @@ func (d *RelayDevice) SubcribeToStateChanges() (chan *State, error) {
 	return newStateChan, nil
 }
 
-func (d *RelayDevice) SubcribeToErrorChanges() (chan error, error) {
+func (d *JsonCommDevice) SubcribeToErrorChanges() (chan error, error) {
 	d.subscribersMutex.Lock()
 	newErrorChan := make(chan error)
 	d.errorChannels = append(d.errorChannels, newErrorChan)
