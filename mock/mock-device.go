@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -26,7 +28,10 @@ func main() {
 		panic(err)
 	}
 
-	topic := "devices/psu1/command"
+	deviceName := "psu1"
+	commandTopic := "devices/" + deviceName + "/command"
+	stateTopic := "devices/" + deviceName + "/state"
+
 	cliCfg := autopaho.ClientConfig{
 		ConnectUsername: "psu1",
 		ConnectPassword: []byte("password1"),
@@ -45,7 +50,7 @@ func main() {
 			// the connection drops)
 			if _, err := cm.Subscribe(context.Background(), &paho.Subscribe{
 				Subscriptions: []paho.SubscribeOptions{
-					{Topic: topic, QoS: 1},
+					{Topic: commandTopic, QoS: 1},
 				},
 			}); err != nil {
 				fmt.Printf("failed to subscribe (%s). This is likely to mean no messages will be received.", err)
@@ -77,43 +82,55 @@ func main() {
 		},
 	}
 
-	c, err := autopaho.NewConnection(ctx, cliCfg) // starts process; will reconnect until context cancelled
-	if err != nil {
-		panic(err)
-	}
-	// Wait for the connection to come up
-	if err = c.AwaitConnection(ctx); err != nil {
-		panic(err)
-	}
-
-	ticker := time.NewTicker(time.Second)
-	msgCount := 0
-	defer ticker.Stop()
 	for {
-		select {
-		case <-ticker.C:
-			msgCount++
-			payload := []byte{byte(rand.Int() + 50), byte(rand.Int() % 5) + 1}
-			// Publish a test message (use PublishViaQueue if you don't want to wait for a response)
-			_, err = c.Publish(ctx, &paho.Publish{
-				QoS:     1,
-				Topic:   "devices/psu1/state",
-				Payload: payload,
-			});
-			
-			log.Println("published payload:", payload)
-			if err != nil {
-				if ctx.Err() == nil {
-					panic(err) // Publish will exit when context cancelled or if something went wrong
-				}
-			}
-			
-			continue
-		case <-ctx.Done():
+		c, err := autopaho.NewConnection(ctx, cliCfg) // starts process; will reconnect until context cancelled
+		if err != nil {
+			panic(err)
 		}
-		break
-	}
+		// Wait for the connection to come up
+		if err = c.AwaitConnection(ctx); err != nil {
+			panic(err)
+		}
 
-	fmt.Println("signal caught - exiting")
-	<-c.Done() // Wait for clean shutdown (cancelling the context triggered the shutdown)
+		state := make(map[string]string)
+		ticker := time.NewTicker(time.Second)
+		msgCount := 0
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				msgCount++
+
+				state["voltage"] = strconv.Itoa(rand.Intn(200) + 50)
+				state["current"] = strconv.Itoa(rand.Intn(5) + 1)
+
+				payload, err := json.Marshal(state)
+				if err != nil {
+					log.Println("Failed to convert state", state, "to string")
+					continue
+				}
+
+				// Publish a test message (use PublishViaQueue if you don't want to wait for a response)
+				_, err = c.Publish(ctx, &paho.Publish{
+					QoS:     1,
+					Topic:   stateTopic,
+					Payload: payload,
+				});
+				
+				if err != nil {
+					if ctx.Err() == nil {
+						// Publish will exit the loop when context cancelled or if something went wrong
+						// and we will reconnect
+						continue
+					}
+				}
+				
+				log.Println("published state:", state)
+				
+				continue
+			case <-ctx.Done():
+			}
+			break
+		}
+	}
 }
